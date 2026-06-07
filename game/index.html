@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>落ちモノパズル</title>
+<style>
+  body {
+    margin: 0;
+    background: #f0f4ff;
+    color: #222;
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    flex-direction: column;
+  }
+  h1 { margin: 10px; color: #333; }
+  #game { display: flex; gap: 20px; }
+  canvas { background: #ffffff; border: 2px solid #888; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+  #info { display: flex; flex-direction: column; gap: 10px; }
+  .panel {
+    background: #ffffff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    min-width: 140px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+  .panel h3 { margin: 0 0 6px; font-size: 14px; color: #666; }
+  .panel .val { font-size: 24px; font-weight: bold; color: #222; }
+  #controls { font-size: 12px; color: #555; line-height: 1.6; }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    gap: 16px;
+  }
+  #overlay.show { display: flex; }
+  #overlay button, #title button {
+    padding: 10px 24px;
+    font-size: 16px;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    background: #e94560;
+    color: white;
+  }
+  #overlay button:hover, #title button:hover { background: #d63651; }
+  #title {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(160deg, #1a1a2e, #16213e);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    gap: 24px;
+    z-index: 10;
+  }
+  #title.hide { display: none; }
+  #title h1 {
+    color: #fff;
+    font-size: 48px;
+    margin: 0;
+    letter-spacing: 4px;
+    text-shadow: 0 0 16px rgba(233,69,96,0.6);
+  }
+  #title .subtitle { color: #aab; font-size: 14px; margin-top: -16px; }
+  #title button { padding: 14px 48px; font-size: 20px; }
+  #title .highscore {
+    color: #f0c040;
+    font-size: 20px;
+    font-weight: bold;
+  }
+  #title .hint { color: #889; font-size: 12px; line-height: 1.8; text-align: center; }
+</style>
+</head>
+<body>
+<div id="title">
+  <h1>落ちモノパズル</h1>
+  <div class="subtitle">FALLING BLOCKS PUZZLE</div>
+  <div class="highscore">★ HIGH SCORE: <span id="titleHigh">0</span></div>
+  <button id="startBtn">スタート</button>
+  <div class="hint">
+    ← → 移動 ／ ↓ ソフトドロップ ／ ↑・X 回転<br>
+    Space ハードドロップ ／ P ポーズ
+  </div>
+</div>
+
+<h1>落ちモノパズル</h1>
+<div id="game">
+  <canvas id="board" width="300" height="600"></canvas>
+  <div id="info">
+    <div class="panel"><h3>HIGH SCORE</h3><div class="val" id="high">0</div></div>
+    <div class="panel"><h3>SCORE</h3><div class="val" id="score">0</div></div>
+    <div class="panel"><h3>LINES</h3><div class="val" id="lines">0</div></div>
+    <div class="panel"><h3>LEVEL</h3><div class="val" id="level">1</div></div>
+    <div class="panel"><h3>NEXT</h3><canvas id="next" width="120" height="100"></canvas></div>
+    <div class="panel" id="controls">
+      ← → : 移動<br>
+      ↓ : ソフトドロップ<br>
+      ↑ / X : 回転<br>
+      Space : ハードドロップ<br>
+      P : ポーズ
+    </div>
+  </div>
+</div>
+
+<div id="overlay">
+  <h2 id="overlayText">GAME OVER</h2>
+  <button id="restart">もう一度</button>
+</div>
+
+<script>
+const COLS = 10, ROWS = 20, SIZE = 30;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('next');
+const nctx = nextCanvas.getContext('2d');
+
+// 各ピースを 4x4 のマトリクスで定義
+const SHAPES = {
+  I: { color: '#00f0f0', matrix: [
+    [0,0,0,0],
+    [1,1,1,1],
+    [0,0,0,0],
+    [0,0,0,0],
+  ]},
+  O: { color: '#f0f000', matrix: [
+    [1,1],
+    [1,1],
+  ]},
+  T: { color: '#a000f0', matrix: [
+    [0,1,0],
+    [1,1,1],
+    [0,0,0],
+  ]},
+  S: { color: '#00f000', matrix: [
+    [0,1,1],
+    [1,1,0],
+    [0,0,0],
+  ]},
+  Z: { color: '#f00000', matrix: [
+    [1,1,0],
+    [0,1,1],
+    [0,0,0],
+  ]},
+  J: { color: '#3050f0', matrix: [
+    [1,0,0],
+    [1,1,1],
+    [0,0,0],
+  ]},
+  L: { color: '#f0a000', matrix: [
+    [0,0,1],
+    [1,1,1],
+    [0,0,0],
+  ]},
+};
+const KEYS = Object.keys(SHAPES);
+
+let board, current, next, score, lines, level, gameOver, paused, dropTimer, lastTime;
+
+const HIGH_KEY = 'ochimono_highscore';
+let highScore = Number(localStorage.getItem(HIGH_KEY)) || 0;
+
+function showHighScore() {
+  document.getElementById('high').textContent = highScore;
+  document.getElementById('titleHigh').textContent = highScore;
+}
+
+function newPiece() {
+  const k = KEYS[Math.floor(Math.random() * KEYS.length)];
+  const s = SHAPES[k];
+  const matrix = s.matrix.map(row => [...row]);
+  return {
+    type: k,
+    color: s.color,
+    matrix,
+    x: Math.floor((COLS - matrix[0].length) / 2),
+    y: -1,
+  };
+}
+
+function init() {
+  board = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  current = newPiece();
+  next = newPiece();
+  score = 0; lines = 0; level = 1;
+  gameOver = false; paused = false;
+  dropTimer = 0;
+  document.getElementById('overlay').classList.remove('show');
+  updateInfo();
+}
+
+function dropInterval() {
+  return Math.max(80, 800 - (level - 1) * 70);
+}
+
+function eachCell(p, fn) {
+  for (let j = 0; j < p.matrix.length; j++) {
+    for (let i = 0; i < p.matrix[j].length; i++) {
+      if (p.matrix[j][i]) fn(p.x + i, p.y + j);
+    }
+  }
+}
+
+function collides(p) {
+  let hit = false;
+  eachCell(p, (x, y) => {
+    if (x < 0 || x >= COLS || y >= ROWS) hit = true;
+    else if (y >= 0 && board[y][x]) hit = true;
+  });
+  return hit;
+}
+
+function merge(p) {
+  eachCell(p, (x, y) => {
+    if (y >= 0) board[y][x] = p.color;
+  });
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let y = ROWS - 1; y >= 0; y--) {
+    if (board[y].every(c => c)) {
+      board.splice(y, 1);
+      board.unshift(Array(COLS).fill(null));
+      cleared++;
+      y++;
+    }
+  }
+  if (cleared) {
+    const pts = [0, 100, 300, 500, 800][cleared] * level;
+    score += pts;
+    lines += cleared;
+    level = Math.floor(lines / 10) + 1;
+    updateInfo();
+  }
+}
+
+function rotateMatrix(m) {
+  const N = m.length;
+  const r = Array.from({length: N}, () => Array(N).fill(0));
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      r[x][N - 1 - y] = m[y][x];
+    }
+  }
+  return r;
+}
+
+function tryRotate() {
+  const rotated = rotateMatrix(current.matrix);
+  const test = { ...current, matrix: rotated };
+  for (const dx of [0, -1, 1, -2, 2]) {
+    test.x = current.x + dx;
+    if (!collides(test)) {
+      current.matrix = rotated;
+      current.x = test.x;
+      return;
+    }
+  }
+}
+
+function move(dx, dy) {
+  const test = { ...current, x: current.x + dx, y: current.y + dy };
+  if (!collides(test)) {
+    current.x += dx;
+    current.y += dy;
+    return true;
+  }
+  return false;
+}
+
+function softDrop() {
+  if (!move(0, 1)) lockPiece();
+}
+
+function hardDrop() {
+  while (move(0, 1)) score += 2;
+  lockPiece();
+  updateInfo();
+}
+
+function lockPiece() {
+  merge(current);
+  clearLines();
+  current = next;
+  next = newPiece();
+  if (collides(current)) {
+    gameOver = true;
+    let msg = 'GAME OVER';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem(HIGH_KEY, highScore);
+      showHighScore();
+      msg = '🎉 ハイスコア更新！';
+    }
+    document.getElementById('overlayText').textContent = msg;
+    document.getElementById('overlay').classList.add('show');
+  }
+}
+
+function updateInfo() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('lines').textContent = lines;
+  document.getElementById('level').textContent = level;
+}
+
+function drawCell(c, x, y, color, size = SIZE) {
+  c.fillStyle = color;
+  c.fillRect(x * size, y * size, size, size);
+  c.strokeStyle = 'rgba(255,255,255,0.25)';
+  c.lineWidth = 1;
+  c.strokeRect(x * size + 0.5, y * size + 0.5, size - 1, size - 1);
+  // highlight
+  c.fillStyle = 'rgba(255,255,255,0.15)';
+  c.fillRect(x * size, y * size, size, 4);
+}
+
+function draw() {
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // grid
+  ctx.strokeStyle = '#e0e0e0';
+  for (let x = 0; x < COLS; x++) {
+    for (let y = 0; y < ROWS; y++) {
+      ctx.strokeRect(x * SIZE, y * SIZE, SIZE, SIZE);
+    }
+  }
+  // 固定ブロック
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (board[y][x]) drawCell(ctx, x, y, board[y][x]);
+    }
+  }
+  // ゴースト
+  const ghost = { ...current, matrix: current.matrix };
+  while (!collides({ ...ghost, y: ghost.y + 1 })) ghost.y++;
+  ctx.globalAlpha = 0.25;
+  eachCell(ghost, (x, y) => {
+    if (y >= 0) drawCell(ctx, x, y, current.color);
+  });
+  ctx.globalAlpha = 1;
+  // 現在のピース
+  eachCell(current, (x, y) => {
+    if (y >= 0) drawCell(ctx, x, y, current.color);
+  });
+  // NEXT
+  nctx.fillStyle = '#fafafa';
+  nctx.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+  const ns = 20;
+  const offX = (nextCanvas.width - next.matrix[0].length * ns) / 2;
+  const offY = (nextCanvas.height - next.matrix.length * ns) / 2;
+  for (let j = 0; j < next.matrix.length; j++) {
+    for (let i = 0; i < next.matrix[j].length; i++) {
+      if (next.matrix[j][i]) {
+        nctx.fillStyle = next.color;
+        nctx.fillRect(offX + i * ns, offY + j * ns, ns, ns);
+        nctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        nctx.strokeRect(offX + i * ns + 0.5, offY + j * ns + 0.5, ns - 1, ns - 1);
+      }
+    }
+  }
+}
+
+function loop(time = 0) {
+  if (gameOver) { draw(); return; }
+  const dt = time - lastTime;
+  lastTime = time;
+  if (!paused) {
+    dropTimer += dt;
+    if (dropTimer > dropInterval()) {
+      dropTimer = 0;
+      softDrop();
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => {
+  if (gameOver) return;
+  if (e.key === 'p' || e.key === 'P') { paused = !paused; return; }
+  if (paused) return;
+  switch (e.key) {
+    case 'ArrowLeft':  move(-1, 0); break;
+    case 'ArrowRight': move(1, 0); break;
+    case 'ArrowDown':  softDrop(); dropTimer = 0; break;
+    case 'ArrowUp':
+    case 'x':
+    case 'X':          tryRotate(); break;
+    case ' ':          hardDrop(); e.preventDefault(); break;
+  }
+});
+
+function startGame() {
+  init();
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('restart').addEventListener('click', startGame);
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  document.getElementById('title').classList.add('hide');
+  startGame();
+});
+
+// タイトル画面の表示準備（ゲームはスタートボタンで開始）
+showHighScore();
+init();
+draw();
+</script>
+</body>
+</html>

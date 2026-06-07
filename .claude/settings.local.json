@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(start game\\\\index.html)",
+      "Skill(schedule)"
+    ]
+  }
+}

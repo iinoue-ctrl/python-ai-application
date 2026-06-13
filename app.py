@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 from tools import blog, email_reply, summarize, proofread, translate, sns, ideas
 
 load_dotenv()
-
+# Streamlit Cloud対応
+if "GEMINI_API_KEY" in st.secrets:
+    os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 st.set_page_config(page_title="AI ライティングツール", page_icon="✍️", layout="wide")
 
 TOOLS = {
